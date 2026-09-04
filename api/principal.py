@@ -16,6 +16,7 @@ propósito, e aqui ele é capturado e traduzido em estado.
 from __future__ import annotations
 
 import os
+import sys
 from contextlib import asynccontextmanager
 
 import psycopg
@@ -139,11 +140,44 @@ def _preparar_banco() -> None:
         )
 
 
+# A preparação da subida, em pares de nome e função — a mesma forma do
+# DEPENDENCIAS, e pelo mesmo motivo: o nome é o que aparece no registro.
+PREPARACOES = (
+    ("banco", _preparar_banco),
+    # Os cinco prefixos do bucket nascem na subida (D4-E2 slide 27).
+    ("objetos", objetos.garantir_estrutura),
+)
+
+
 @asynccontextmanager
 async def _vida(app: FastAPI):
-    _preparar_banco()
-    # Os cinco prefixos do bucket nascem na subida (D4-E2 slide 27).
-    objetos.garantir_estrutura()
+    """Prepara o que estiver de pé, e NUNCA derruba o processo por isso.
+
+    Preparação é conveniência; sonda é verdade. Se a preparação mata a subida,
+    a rota de saúde — que existe justamente para dizer QUAL dependência faltou
+    — nunca chega a existir: quem publicou recebe um registro de queda no
+    lugar de um diagnóstico, e o serviço nem sobe para ser perguntado. É a
+    lição do laboratório 04 de cabeça para baixo.
+
+    Não é hipótese: a publicação de referência falhou duas vezes assim. Sem o
+    armazenamento de objetos configurado, `garantir_estrutura` levantava
+    `KeyError` na subida e o provedor registrava apenas "update failed" — sem
+    `/health`, sem sonda, sem a palavra `objetos` em lugar nenhum.
+
+    O que falhar aqui reaparece em `/health` como `falhou`, que é onde se
+    olha. A linha no erro padrão é para quem lê o registro do provedor.
+    """
+    for nome, preparar in PREPARACOES:
+        try:
+            preparar()
+        except Exception as erro:  # noqa: BLE001 — acusar é trabalho da rota
+            # O tipo e a mensagem, nunca o valor da configuração: registro de
+            # provedor é lido por quem tem acesso ao painel, e uma URL de
+            # conexão impressa aqui vaza a senha para esse registro.
+            print(
+                f"preparação de {nome} não rodou — {type(erro).__name__}: {erro}",
+                file=sys.stderr,
+            )
     yield
 
 
