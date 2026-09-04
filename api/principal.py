@@ -142,11 +142,21 @@ def _preparar_banco() -> None:
 
 # A preparação da subida, em pares de nome e função — a mesma forma do
 # DEPENDENCIAS, e pelo mesmo motivo: o nome é o que aparece no registro.
+# As duas envolvidas em `lambda` de propósito: guardar a função direto aqui
+# a congelaria no momento da importação, e quem a substituísse depois — os
+# testes, que trocam a preparação por uma função vazia — estaria trocando um
+# nome que esta tupla não consulta mais. Assim a busca acontece na chamada.
 PREPARACOES = (
-    ("banco", _preparar_banco),
+    ("banco", lambda: _preparar_banco()),
     # Os cinco prefixos do bucket nascem na subida (D4-E2 slide 27).
-    ("objetos", objetos.garantir_estrutura),
+    ("objetos", lambda: objetos.garantir_estrutura()),
 )
+
+# O que a preparação NÃO conseguiu fazer nesta subida — nome da dependência
+# e tipo do erro. A rota de saúde lê este dicionário; ninguém mais escreve
+# nele. Existe porque proteger a subida (abaixo) sem ele trocaria uma queda
+# barulhenta por uma mentira silenciosa.
+PREPARACAO_FALHOU: dict[str, str] = {}
 
 
 @asynccontextmanager
@@ -167,10 +177,12 @@ async def _vida(app: FastAPI):
     O que falhar aqui reaparece em `/health` como `falhou`, que é onde se
     olha. A linha no erro padrão é para quem lê o registro do provedor.
     """
+    PREPARACAO_FALHOU.clear()
     for nome, preparar in PREPARACOES:
         try:
             preparar()
         except Exception as erro:  # noqa: BLE001 — acusar é trabalho da rota
+            PREPARACAO_FALHOU[nome] = type(erro).__name__
             # O tipo e a mensagem, nunca o valor da configuração: registro de
             # provedor é lido por quem tem acesso ao painel, e uma URL de
             # conexão impressa aqui vaza a senha para esse registro.
@@ -219,9 +231,22 @@ def saude() -> dict:
         estado["automacao"] = "não configurada — fluxo em Python"
     if rota_rastros() == "hospedada":
         estado["rastros"] = "rota hospedada, não conferida aqui"
+    # Uma dependência pode estar DE PÉ e ainda assim inutilizável: se a
+    # preparação da subida não rodou, a tabela de documentos ou os cinco
+    # prefixos não existem, e a sonda — que só pergunta "você responde?" —
+    # diria `ok` sobre um serviço que a aplicação não consegue usar. No perfil
+    # completo o Compose espera cada dependência ficar sadia antes de subir a
+    # API, e a janela nem se abre; no perfil leve o armazenamento é um serviço
+    # de fora, que pode estar de pé um segundo depois de ter falhado.
+    for nome, tipo in PREPARACAO_FALHOU.items():
+        if estado.get(nome) == "ok":
+            estado[nome] = f"falhou na preparação da subida ({tipo})"
     # `pronto` é sobre o que FALHOU, e não sobre o que está de pé: uma escolha
     # documentada não derruba a prontidão do serviço.
-    pronto = not any(v == "falhou" for v in estado.values())
+    # `startswith`, e não igualdade: a linha acima acrescenta um motivo ao
+    # `falhou`, e uma comparação exata deixaria justamente esse caso passar
+    # por pronto.
+    pronto = not any(str(v).startswith("falhou") for v in estado.values())
     return {"pronto": pronto, "detalhe": estado}
 
 
