@@ -1,0 +1,13 @@
+# Dependências do stack de referência da D4. Versões fixadas para que a
+# correção não dependa do dia em que foi rodada.
+fastapi==0.115.6
+uvicorn==0.34.0
+pydantic==2.10.5
+httpx==0.28.1
+boto3==1.36.6
+psycopg[binary]==3.2.4
+# observabilidade: a norma aberta serve os DOIS destinos (D4-E4 slide 10)
+opentelemetry-sdk==1.29.0
+opentelemetry-exporter-otlp-proto-http==1.29.0
+# testes (rodam sem rede e sem serviço de pé)
+pytest==8.3.4
